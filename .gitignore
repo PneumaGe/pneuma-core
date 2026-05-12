@@ -1,0 +1,53 @@
+# Project-specific documentation
+GEMINI.md
+REQUIREMENTS.md
+
+# Arduino IDE
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+build/
+dist/
+*.elf
+*.hex
+*.bin
+
+# Build artifacts
+*.o
+*.obj
+*.elf
+*.hex
+*.eep
+*.lss
+*.map
+*.sym
+
+# IDE & Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Dependencies & Libraries (if using PlatformIO or similar)
+.pio/
+.pioenvs/
+.piolibdeps/
+lib/
+include/
+
+# Serial monitor logs
+*.log
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Python cache (if using any build scripts)
+__pycache__/
+*.py[cod]
+*$py.class
