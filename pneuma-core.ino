@@ -26,8 +26,6 @@
 // ==========================================================================
 
 #include <ArduinoBLE.h>
-// #include <Arduino_LSM9DS1.h>
-#include <Arduino_BMI270_BMM150.h>
 #include <ArduinoJson.h>
 
 // -- Simulation Control --
@@ -37,10 +35,13 @@
 
 // Conditionally include real sensor libraries if not simulating
 #if !SIMULATE_PERIPHERALS
-  #include <Arduino_BMP390.h>  // For pressure on Rev2
-  #include <Arduino_HS300x.h>  // For temp/humidity on Rev2
   // #include "SprintIR_W.h"    // Placeholder for actual library
 #endif
+#include <Arduino_BMI270_BMM150.h> // IMU for Nano 33 BLE Sense Rev 2
+#include <Zanshin_BME680.h>
+BME680_Class bmeChamber;
+#include <Arduino_LPS22HB.h>     // For pressure on Rev2
+#include <Arduino_HS300x.h>  // For temp/humidity on Rev2
 
 // ==========================================================================
 // BLE Service & Characteristics (UUIDs from GEMINI.md)
@@ -111,7 +112,7 @@ float currentCO2 = 415.0;
 float fluxRate = 1.5; // ppm per second during measurement
 
 // Pump
-const int PUMP_PIN = 1;
+const int PUMP_PIN = 2;
 const int PUMP_SPEED_OFF = 0;
 const int PUMP_SPEED_LOW = 77;   // ~30%
 const int PUMP_SPEED_MED = 153;  // ~60%
@@ -167,12 +168,17 @@ float readBatterySoC() {
 // Simulate environmental sensors onboard the Nano
 void readOnboardSensors(ChamberStats &stats) {
   // Use stable but slightly varying values for simulation
-  stats.airTemperature = (int16_t)((25.0 + sin(millis() / 10000.0)) * 100);
-  stats.airPressure = (uint32_t)((1013.25 + sin(millis() / 15000.0)) * 1000);
-  stats.airHumidity = (uint16_t)((45.0 + cos(millis() / 12000.0) * 5) * 100);
-  stats.chamberTemperature = (int16_t)((25.0 + sin(millis() / 10000.0)) * 100);
-  stats.chamberPressure = (uint32_t)((1013.25 + sin(millis() / 15000.0)) * 1000);
-  stats.chamberHumidity = (uint16_t)((45.0 + cos(millis() / 12000.0) * 5) * 100);
+  stats.airTemperature = (int16_t)(HS300x.readTemperature() * 100);
+  stats.airPressure = (uint32_t)(BARO.readPressure() * 10.0); // LPS22HB is kPa, convert to hPa
+  stats.airHumidity = (uint16_t)(HS300x.readHumidity() * 100);
+
+  // Read actual chamber sensors from BME680 instead of simulating
+  int32_t temp, humidity, pressure, gas;
+  bmeChamber.getSensorData(temp, humidity, pressure, gas);
+  
+  stats.chamberTemperature = (int16_t)temp; // Zanshin lib returns temp as int32_t in 100 * C
+  stats.chamberPressure = (uint32_t)(pressure * 10); // Zanshin lib returns pressure in Pa. We need hPa * 1000, which is Pa * 10
+  stats.chamberHumidity = (uint16_t)(humidity / 10); // Zanshin lib returns humidity in 1000 * %, we need 100 * %
   stats.status = 0; // Clear status bits for now
 }
 
@@ -198,12 +204,16 @@ float readBatterySoC() {
 void readOnboardSensors(ChamberStats &stats) {
   // Read from the Rev2 onboard sensors
   stats.airTemperature = (int16_t)(HS300x.readTemperature() * 100);
-  stats.airPressure = (uint32_t)(BMP390.readPressure() * 10.0); // BMP390 is Pa, convert to hPa*1000
+  stats.airPressure = (uint32_t)(BARO.readPressure() * 10.0); // LPS22HB is kPa, convert to hPa*1000
   stats.airHumidity = (uint16_t)(HS300x.readHumidity() * 100);
-  // TODO: integrate chamber sensors
-  stats.chamberTemperature = 0;
-  stats.chamberPressure = 0;
-  stats.chamberHumidity = 0;
+  
+  // Read chamber sensors from BME680
+  int32_t temp, humidity, pressure, gas;
+  bmeChamber.getSensorData(temp, humidity, pressure, gas);
+  
+  stats.chamberTemperature = (int16_t)temp; // Zanshin lib returns temp as int32_t in 100 * C
+  stats.chamberPressure = (uint32_t)(pressure * 10); // Zanshin lib returns pressure in Pa. We need hPa * 1000, which is Pa * 10
+  stats.chamberHumidity = (uint16_t)(humidity / 10); // Zanshin lib returns humidity in 1000 * %, we need 100 * %
   stats.status = 0;
 }
 #endif
@@ -521,15 +531,22 @@ void setup() {
   deviceInfoChar.setEventHandler(BLESubscribed, onDeviceInfoSubscribed);
 
   // --- Initialize Sensors ---
-  #if !SIMULATE_PERIPHERALS
+  if (!bmeChamber.begin(I2C_STANDARD_MODE)) {
+    Serial.println("Failed to initialize chamber BME680!");
+  } else {
+    bmeChamber.setOversampling(TemperatureSensor, Oversample16);
+    bmeChamber.setOversampling(HumiditySensor,   Oversample16);
+    bmeChamber.setOversampling(PressureSensor,   Oversample16);
+    bmeChamber.setIIRFilter(IIR4);
+  }
+  if (!BARO.begin()) {
+    Serial.println("Failed to initialize BARO!");
+  }
 
-    if (!BMP390.begin()) {
-      Serial.println("Failed to initialize BMP390!");
-    }
-    if (!HS300x.begin()) {
-      Serial.println("Failed to initialize HS300x!");
-    }
-  #endif
+  if (!HS300x.begin()) {
+    Serial.println("Failed to initialize HS300x!");
+  }
+  
   if (!IMU.begin()) {
     Serial.println("Failed to initialize IMU!");
   }
