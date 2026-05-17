@@ -406,6 +406,7 @@ void streamDeviceInfo(BLEDevice& central) {
   doc["processorModel"] = "Nano 33 BLE";
   doc["processorSerial"] = mcuSerial;
   doc["firmwareVersion"] = "1.2.0";
+  doc["dataModelVersion"] = "1.9.0";
 
   // Capabilities
   JsonArray capabilities = doc.createNestedArray("capabilities");

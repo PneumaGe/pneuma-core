@@ -94,7 +94,7 @@ The PneumaGe firmware manages high-precision soil gas flux monitoring with a foc
 | **System Command**  | `...0003` | Write        | Hex control commands       |
 | **System Status**   | `...0005` | Read/Notify  | Status flags (tilt, bump, timeout) |
 | **Battery Life**    | `...0006` | Read/Notify  | State of charge (%)        |
-| **Device Info**     | `...0007` | Notify       | Streamed device JSON       |
+| **Device Info**     | `...0007` | Notify       | Streamed device JSON (includes dataModelVersion: "1.9.0") |
 
 ## 🧪 BLE Testing with nRF Connect
 
