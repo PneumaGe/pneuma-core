@@ -137,12 +137,19 @@ const uint8_t STATUS_FLAG_TIMEOUT = 0x07;
 // Simulate reading from the SprintIR-W CO2 Sensor
 float readGasSensor() {
   if (isMeasuring) {
-    currentCO2 += fluxRate * (random(80, 120) / 100.0); // Add some noise
+    // Non-linear accumulation model (diffusion-driven asymptotic curve)
+    // Flux decreases as chamber concentration approaches simulated soil concentration
+    const float simulatedSoilCO2 = 3000.0; // Typical high soil CO2 concentration (ppm)
+    float diffusionConstant = fluxRate / (simulatedSoilCO2 - baselineCO2);
+    float gradient = simulatedSoilCO2 - currentCO2;
+    
+    // Add flux based on gradient, plus ~0.5 ppm of Gaussian-ish noise
+    currentCO2 += (gradient * diffusionConstant) + (random(-50, 50) / 100.0);
   } else {
     // Decay back to baseline when not measuring
-    if (abs(currentCO2 - baselineCO2) > 0.5) {
-      currentCO2 -= (currentCO2 - baselineCO2) / 2.0;
-    }
+    float flushGradient = currentCO2 - baselineCO2;
+    currentCO2 -= flushGradient * 0.1; // Simulates flushing the chamber out (10% decay per sec)
+    if (currentCO2 < baselineCO2) currentCO2 = baselineCO2;
   }
   return currentCO2;
 }

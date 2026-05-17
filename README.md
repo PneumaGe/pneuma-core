@@ -125,7 +125,11 @@ For offline development and testing, the firmware includes a **Peripheral Simula
 ```
 
 When enabled, the firmware generates synthetic sensor data:
-- **CO2 Sensor:** Simulates rising concentrations during measurement, decay at baseline.
+- **CO2 Sensor:** Uses a diffusion-driven asymptotic model (based on Fick's law) to simulate realistic non-linear gas accumulation.
+  - **Adjusting the Model:** In `pneuma-core.ino`, you can tweak:
+    - `simulatedSoilCO2` (default 3000.0 ppm): Defines the deep-soil concentration ceiling.
+    - `fluxRate` (default 1.5): Sets the initial accumulation rate. As chamber concentration approaches the ceiling, the flux naturally slows.
+    - Decay multiplier (default 10% per second): Simulates the chamber flushing back to baseline when the measurement stops.
 - **Environmental Sensors:** Stable values with gentle sinusoidal variation.
 - **Battery:** Simulates drain, faster when pump is active.
 - **Pump Current:** Nominal 200mA draw with noise.
