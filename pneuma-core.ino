@@ -19,10 +19,9 @@
 // Project Lead: Shereef Sayed
 //
 // Nano 33 BLE Sense Pinout:
-// - D1: PWM to BoxerPump 22KD
+// - D2: PWM to BoxerPump 22KD
 // - A2: Current Sensor (Shunt)
-// - I2C: SprintIR-W, BMP390, SHT45
-// - SPI: BMI270 IMU
+// - I2C: BME680 (Chamber Temp/Humidity/Pressure/Gas), LPS22HB (Air Pressure), HS300x (Air Temp/Humidity)
 // ==========================================================================
 
 #include <ArduinoBLE.h>
@@ -38,9 +37,9 @@
   // #include "SprintIR_W.h"    // Placeholder for actual library
 #endif
 #include <Arduino_BMI270_BMM150.h> // IMU for Nano 33 BLE Sense Rev 2
-#include <Zanshin_BME680.h>
+#include <Zanshin_BME680.h> // For chamber temp/humidity/pressure/gas
 BME680_Class bmeChamber;
-#include <Arduino_LPS22HB.h>     // For pressure on Rev2
+#include <Arduino_LPS22HB.h> // For pressure on Rev2
 #include <Arduino_HS300x.h>  // For temp/humidity on Rev2
 
 // ==========================================================================
@@ -51,7 +50,7 @@ BLEService pneumaService("19B10000-E8F2-537E-4F6C-D104768A1214");
 // UUID: 0001 - Real-time gas concentration
 BLEFloatCharacteristic gasConcentrationChar("19B10001-E8F2-537E-4F6C-D104768A1214", BLERead | BLENotify);
 // UUID: 0002 - Packed environmental data
-BLECharacteristic chamberStatsChar("19B10002-E8F2-537E-4F6C-D104768A1214", BLERead | BLENotify, 18);
+BLECharacteristic chamberStatsChar("19B10002-E8F2-537E-4F6C-D104768A1214", BLERead | BLENotify, 20);
 // UUID: 0003 - Command input from the app
 BLECharacteristic systemCommandChar("19B10003-E8F2-537E-4F6C-D104768A1214", BLEWriteWithoutResponse, 1);
 // UUID: 0004 - RANSAC flux calculation result (Disabled for Nano build)
@@ -73,6 +72,7 @@ struct __attribute__((packed)) ChamberStats {
   uint32_t chamberPressure;   // Pressure (hPa * 1000)
   uint16_t airHumidity;   // Humidity (% * 100)
   uint16_t chamberHumidity;   // Humidity (% * 100)
+  int16_t  pressureAltitude;  // Estimated altitude (meters)
   uint16_t status;     // Bitmask for flags
 };
 
@@ -176,7 +176,11 @@ float readBatterySoC() {
 void readOnboardSensors(ChamberStats &stats) {
   // Use stable but slightly varying values for simulation
   stats.airTemperature = (int16_t)(HS300x.readTemperature() * 100);
-  stats.airPressure = (uint32_t)(BARO.readPressure() * 10.0); // LPS22HB is kPa, convert to hPa
+  
+  float pressure_hPa = BARO.readPressure() * 10.0; // LPS22HB is kPa, convert to hPa
+  stats.airPressure = (uint32_t)(pressure_hPa * 1000.0); // Scale to hPa * 1000
+  stats.pressureAltitude = (int16_t)(44330.0 * (1.0 - pow(pressure_hPa / 1013.25, 0.1903))); // Standard atmosphere math
+  
   stats.airHumidity = (uint16_t)(HS300x.readHumidity() * 100);
 
   // Read actual chamber sensors from BME680 instead of simulating
@@ -211,7 +215,11 @@ float readBatterySoC() {
 void readOnboardSensors(ChamberStats &stats) {
   // Read from the Rev2 onboard sensors
   stats.airTemperature = (int16_t)(HS300x.readTemperature() * 100);
-  stats.airPressure = (uint32_t)(BARO.readPressure() * 10.0); // LPS22HB is kPa, convert to hPa*1000
+  
+  float pressure_hPa = BARO.readPressure() * 10.0; // LPS22HB is kPa, convert to hPa
+  stats.airPressure = (uint32_t)(pressure_hPa * 1000.0); // Scale to hPa * 1000
+  stats.pressureAltitude = (int16_t)(44330.0 * (1.0 - pow(pressure_hPa / 1013.25, 0.1903))); // Standard atmosphere math
+  
   stats.airHumidity = (uint16_t)(HS300x.readHumidity() * 100);
   
   // Read chamber sensors from BME680
