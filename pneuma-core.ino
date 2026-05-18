@@ -383,10 +383,14 @@ void onCommandWritten(BLEDevice central, BLECharacteristic characteristic) {
 // This function is triggered when the app subscribes to the Device Info characteristic.
 // It generates the full JSON descriptor and streams it in small chunks (notifications).
 void streamDeviceInfo(BLEDevice& central) {
+  Serial.println("[STREAM] streamDeviceInfo entered");
+  
   // Check if the central is still connected before proceeding.
   if (!central.connected()) {
+    Serial.println("[STREAM] ERROR: Central not connected, aborting");
     return;
   }
+  Serial.println("[STREAM] Central is connected, building JSON...");
 
   // The JSON document size needs to be large enough for the entire object.
   // Using the ArduinoJson Assistant is recommended for production.
@@ -472,41 +476,92 @@ void streamDeviceInfo(BLEDevice& central) {
   // Serialize JSON directly to a stack-allocated buffer to avoid heap fragmentation.
   char output[1024];
   size_t length = serializeJson(doc, output);
+  Serial.println("[STREAM] JSON serialized successfully");
 
   // Stream the JSON data in chunks. The chunk size should be less than or
   // equal to the MTU size minus 3 bytes for overhead. 20 is a safe default.
   const int chunkSize = 20;
   size_t bytesSent = 0;
 
-  Serial.print("Streaming Device Info... Total size: ");
-  Serial.println(length);
+  Serial.print("[STREAM] Starting stream... Total size: ");
+  Serial.print(length);
+  Serial.print(" bytes, ");
+  Serial.print((length + chunkSize - 1) / chunkSize);
+  Serial.println(" packets");
+  Serial.println("[STREAM] Connection status: " + String(central.connected() ? "CONNECTED" : "DISCONNECTED"));
 
   while (bytesSent < length) {
     if (!central.connected()) {
-      Serial.println("Client disconnected during stream. Aborting.");
+      Serial.print("[STREAM] Client disconnected at packet ");
+      Serial.print(bytesSent / chunkSize);
+      Serial.print("/");
+      Serial.print((length + chunkSize - 1) / chunkSize);
+      Serial.println(". Aborting.");
       break;
     }
 
     size_t chunk = min((size_t)chunkSize, length - bytesSent);
     deviceInfoChar.writeValue((const uint8_t*)(output + bytesSent), chunk);
     bytesSent += chunk;
+    
+    // Print progress every 10 packets
+    if ((bytesSent / chunkSize) % 10 == 0) {
+      Serial.print("[STREAM] Sent ");
+      Serial.print(bytesSent / chunkSize);
+      Serial.print("/");
+      Serial.println((length + chunkSize - 1) / chunkSize);
+    }
 
-    // A small delay can help some BLE client implementations process packets.
-    delay(15);
+    // Increased delay to prevent overwhelming the BLE stack
+    // and causing LINK_SUPERVISION_TIMEOUT errors
+    delay(30);
   }
 
   // After the last data packet, send a zero-length packet to signal the
   // end of the transmission. This is a crucial part of the protocol.
+  Serial.println("[STREAM] Checking connection before sending end marker...");
   if (central.connected()) {
+    Serial.println("[STREAM] Sending zero-length end marker...");
     deviceInfoChar.writeValue((const uint8_t*)nullptr, 0);
-    Serial.println("Device Info stream complete.");
+    Serial.println("[STREAM] ✓ Device Info stream complete!");
+  } else {
+    Serial.println("[STREAM] ERROR: Client disconnected before end marker!");
   }
 }
 
 void onDeviceInfoSubscribed(BLEDevice central, BLECharacteristic characteristic) {
+  Serial.println("[DEBUG] onDeviceInfoSubscribed called");
   if (characteristic.subscribed()) {
-    streamDeviceInfo(central);
+    Serial.println("[DEBUG] Device Info characteristic subscribed");
+    Serial.println("[DEBUG] Connection status before stream: " + String(central.connected() ? "CONNECTED" : "DISCONNECTED"));
+    
+    // Brief delay to let connection stabilize
+    Serial.println("[DEBUG] Waiting 300ms before streaming...");
+    delay(300);
+    
+    Serial.println("[DEBUG] Connection status after delay: " + String(central.connected() ? "CONNECTED" : "DISCONNECTED"));
+    
+    if (central.connected()) {
+      Serial.println("[DEBUG] Starting device info stream...");
+      streamDeviceInfo(central);
+      Serial.println("[DEBUG] Device info stream function returned");
+    } else {
+      Serial.println("[ERROR] Client disconnected before stream could start!");
+    }
+  } else {
+    Serial.println("[DEBUG] Device Info characteristic unsubscribed");
   }
+}
+
+// Generic subscription handler for debugging
+void onCharacteristicSubscribed(BLEDevice central, BLECharacteristic characteristic) {
+  Serial.print("[DEBUG] Characteristic subscribed: ");
+  Serial.println(characteristic.uuid());
+}
+
+void onCharacteristicUnsubscribed(BLEDevice central, BLECharacteristic characteristic) {
+  Serial.print("[DEBUG] Characteristic unsubscribed: ");
+  Serial.println(characteristic.uuid());
 }
 
 // ==========================================================================
@@ -542,9 +597,19 @@ void setup() {
   BLE.addService(pneumaService);
   
     
-  // Set the command handler
+  // Set event handlers
   systemCommandChar.setEventHandler(BLEWritten, onCommandWritten);
   deviceInfoChar.setEventHandler(BLESubscribed, onDeviceInfoSubscribed);
+  
+  // Add subscription handlers for debugging
+  gasConcentrationChar.setEventHandler(BLESubscribed, onCharacteristicSubscribed);
+  gasConcentrationChar.setEventHandler(BLEUnsubscribed, onCharacteristicUnsubscribed);
+  chamberStatsChar.setEventHandler(BLESubscribed, onCharacteristicSubscribed);
+  chamberStatsChar.setEventHandler(BLEUnsubscribed, onCharacteristicUnsubscribed);
+  systemStatusChar.setEventHandler(BLESubscribed, onCharacteristicSubscribed);
+  systemStatusChar.setEventHandler(BLEUnsubscribed, onCharacteristicUnsubscribed);
+  batteryLifeChar.setEventHandler(BLESubscribed, onCharacteristicSubscribed);
+  batteryLifeChar.setEventHandler(BLEUnsubscribed, onCharacteristicUnsubscribed);
 
   // --- Initialize Sensors ---
   if (!bmeChamber.begin(I2C_STANDARD_MODE)) {
@@ -570,6 +635,15 @@ void setup() {
   
   // NOTE: Device info is populated on first BLE connection to prevent a startup crash.
 
+  // --- Verify struct sizes for BLE compatibility ---
+  Serial.print("ChamberStats struct size: ");
+  Serial.print(sizeof(ChamberStats));
+  Serial.println(" bytes (must be <= 20)");
+  if (sizeof(ChamberStats) > 20) {
+    Serial.println("ERROR: ChamberStats exceeds 20-byte BLE limit!");
+    while (1); // Halt
+  }
+  
   // --- Finalize Setup ---
   BLE.advertise();
   lastHeartbeat = millis();
@@ -582,7 +656,11 @@ void handleConnectedState() {
 
   // On the transition from disconnected to connected
   if (!wasConnected) {
-    Serial.println("Client connected.");
+    Serial.println("[BLE] ========================================");
+    Serial.println("[BLE] Client connected!");
+    Serial.print("[BLE] BLE Address: ");
+    Serial.println(BLE.address());
+    Serial.println("[BLE] ========================================");
     lastHeartbeat = currentTime; // Reset heartbeat timer
     wasConnected = true;
   }
@@ -606,6 +684,19 @@ void handleConnectedState() {
 
       ChamberStats stats;
       readOnboardSensors(stats);
+      
+      // Debug: Print chamber stats every 5 seconds
+      static int debugCounter = 0;
+      if (debugCounter++ % 5 == 0) {
+        Serial.print("[STATS] Chamber T: ");
+        Serial.print(stats.chamberTemperature / 100.0);
+        Serial.print("C, P: ");
+        Serial.print(stats.chamberPressure / 1000.0);
+        Serial.print(" hPa, RH: ");
+        Serial.print(stats.chamberHumidity / 100.0);
+        Serial.println("%");
+      }
+      
       chamberStatsChar.writeValue((uint8_t*)&stats, sizeof(stats));
 
       float soc = readBatterySoC();
@@ -628,19 +719,39 @@ void handleConnectedState() {
 void handleDisconnectedState() {
   // On the transition from connected to disconnected, reset system state
   if (wasConnected) {
-    Serial.println("Client disconnected. Resetting state.");
+    Serial.println("[BLE] ========================================");
+    Serial.println("[BLE] Client disconnected!");
+    Serial.println("[BLE] Resetting system state...");
     isMeasuring = false;
     setPumpSpeed(PUMP_SPEED_OFF);
     systemShutdown = false;
     systemStatusFlags = 0x00;
     currentCO2 = baselineCO2; // Reset CO2 to baseline
     wasConnected = false;
+    
+    // CRITICAL: Restart advertising so device can be discovered again
+    Serial.println("[BLE] Restarting advertising...");
+    BLE.advertise();
+    Serial.println("[BLE] Ready for new connection");
+    Serial.println("[BLE] ========================================");
   }
   digitalWrite(LED_BUILTIN, HIGH); // Solid LED when disconnected
 }
 
 void loop() {
   BLE.poll();
+  
+  // Debug: Show connection state periodically
+  static unsigned long lastDebugTime = 0;
+  if (millis() - lastDebugTime > 10000) { // Every 10 seconds
+    lastDebugTime = millis();
+    Serial.print("[LOOP] Status: ");
+    if (BLE.connected()) {
+      Serial.println("CONNECTED");
+    } else {
+      Serial.println("DISCONNECTED - Advertising...");
+    }
+  }
 
   if (BLE.connected()) {
     handleConnectedState();
