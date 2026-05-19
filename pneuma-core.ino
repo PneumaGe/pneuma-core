@@ -567,14 +567,53 @@ void onCharacteristicUnsubscribed(BLEDevice central, BLECharacteristic character
 // ==========================================================================
 // Setup & Main Loop
 // ==========================================================================
+void recoverI2CBus() {
+  pinMode(SDA, INPUT_PULLUP);
+  pinMode(SCL, INPUT_PULLUP);
+  
+  // If SDA is stuck LOW, an I2C device is holding the bus hostage
+  if (digitalRead(SDA) == LOW) {
+    Serial.println("[SYSTEM] I2C bus locked (SDA is LOW). Attempting recovery...");
+    
+    pinMode(LED_BUILTIN, OUTPUT);
+    digitalWrite(LED_BUILTIN, HIGH); // Turn LED on to indicate hardware intervention
+    pinMode(SCL, OUTPUT);
+    
+    // Clock out the stuck bit (up to 9 pulses for a full byte + ACK)
+    for (int i = 0; i < 9; i++) {
+      digitalWrite(SCL, LOW);
+      delayMicroseconds(10);
+      digitalWrite(SCL, HIGH);
+      delayMicroseconds(10);
+      
+      if (digitalRead(SDA) == HIGH) {
+        break; // Bus released!
+      }
+    }
+    
+    // Generate a proper STOP condition to reset the I2C state machine
+    pinMode(SDA, OUTPUT);
+    digitalWrite(SDA, LOW);
+    delayMicroseconds(10);
+    digitalWrite(SCL, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(SDA, HIGH);
+    delayMicroseconds(10);
+    
+    Serial.println("[SYSTEM] I2C bus recovery complete.");
+    digitalWrite(LED_BUILTIN, LOW); // Turn LED off once recovered
+  }
+}
+
 void setup() {
   Serial.begin(9600);
   // while (!Serial); // Wait for serial connection
   Serial.println("PneumaGe Firmware Booting...");
 
+  recoverI2CBus(); // Free the bus before any Wire/Sensor libraries initialize
+
   pinMode(PUMP_PIN, OUTPUT);
-  // pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
+  pinMode(LED_BUILTIN, OUTPUT);
 
   // --- Initialize BLE ---
   if (!BLE.begin()) {
