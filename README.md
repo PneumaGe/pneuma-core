@@ -136,6 +136,27 @@ When enabled, the firmware generates synthetic sensor data:
 
 To use real hardware sensors, set `SIMULATE_PERIPHERALS` to `false` and ensure all required libraries are installed.
 
+## ⚠️ Known Issues
+
+### BLE Connection Degradation After Extended Uptime
+
+**Symptom**: The Arduino microcontroller may become unable to establish BLE connections after being powered on (but disconnected from BLE) for an extended period of time. The mobile app will scan and find the device, but connection attempts will fail.
+
+**Workaround**: Reset the Arduino by pressing the white reset button or power cycling the device. Connection will work normally after reset.
+
+**Possible Root Causes** (under investigation):
+1. **BLE Stack Degradation**: The ArduinoBLE library may have issues maintaining stable advertising over long periods without periodic connection/disconnection cycles
+2. **Memory Fragmentation**: Heap fragmentation in the BLE stack or sensor libraries (BME680, IMU) that accumulates over time
+3. **Serial Buffer Overflow**: If the Serial Monitor is not actively reading, the extensive debug logging may cause buffer overflow and system instability
+4. **BLE Advertising Not Refreshed**: The `BLE.advertise()` call only occurs at boot and after disconnection from an established connection. If the device has never connected, there's no periodic refresh of the advertising state
+5. **nRF52840 Internal Watchdog**: The Nordic nRF52840 chip may have internal power management or watchdog features that affect BLE functionality after prolonged operation
+
+**Status**: Functionally, the BLE connection works correctly. This is a reliability issue that manifests after an unknown duration of continuous operation without BLE activity. Investigation ongoing.
+
+**Testing Notes**:
+- The `recoverI2CBus()` function was added to address potential I2C bus lockup, but did not resolve this issue
+- Serial buffer overflow has been ruled out as the sole cause (issue persists with Serial Monitor open)
+
 ## ⚖️ License
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
