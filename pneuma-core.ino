@@ -16,6 +16,8 @@
 // PneumaGe: Double-Walled Static Accumulation Chamber Controller
 //
 // Firmware Version: 1.2.0 (Simulation Enabled)
+// Data Model Version: 1.9.0 (PneumaGe Master Schema)
+// Device Descriptor Version: 1.0.0
 // Project Lead: Shereef Sayed
 //
 // Nano 33 BLE Sense Pinout:
@@ -26,6 +28,7 @@
 
 #include <ArduinoBLE.h>
 #include <ArduinoJson.h>
+#include "device_descriptor.h" // Generated device descriptor types
 
 // -- Simulation Control --
 // Set to 'true' to use simulated data for peripherals that are not yet connected.
@@ -248,7 +251,34 @@ String getMCUSerialNumber() {
   );
   serialNumber[16] = '\0';
   return String(serialNumber);
-} // END getSerialNumber
+}
+
+// --- Device Descriptor Helpers ---
+// Convert DeviceCapability enum to JSON string
+const char* capabilityToString(DeviceCapability cap) {
+  switch (cap) {
+    case DeviceCapability::RANSAC_ONBOARD: return "ransac_onboard";
+    case DeviceCapability::RANSAC_REMOTE: return "ransac_remote";
+    case DeviceCapability::MULTI_CHANNEL: return "multi_channel";
+    case DeviceCapability::IMU_STABILIZATION: return "imu_stabilization";
+    case DeviceCapability::GPS: return "gps";
+    default: return "unknown";
+  }
+}
+
+// Convert SensorType enum to JSON string
+const char* sensorTypeToString(SensorType type) {
+  switch (type) {
+    case SensorType::NDIR: return "NDIR";
+    case SensorType::MEMS: return "MEMS";
+    case SensorType::ELECTROCHEMICAL: return "Electrochemical";
+    case SensorType::PID: return "PID";
+    case SensorType::THERMOCOUPLE: return "Thermocouple";
+    case SensorType::RTD: return "RTD";
+    default: return "unknown";
+  }
+}
+
 // --- Pump Control ---
 void setPumpSpeed(int speed) {
   if (currentPumpSpeed == 0 && speed > 0) {
@@ -382,6 +412,10 @@ void onCommandWritten(BLEDevice central, BLECharacteristic characteristic) {
 // --- Device Info Streaming ---
 // This function is triggered when the app subscribes to the Device Info characteristic.
 // It generates the full JSON descriptor and streams it in small chunks (notifications).
+//
+// The JSON structure conforms to the Device Descriptor Schema v1.0.0
+// (see pneuma-datamodel/schema/device-descriptor-v1.0.0.json).
+// Type-safe enums from device_descriptor.h ensure consistency with the schema.
 void streamDeviceInfo(BLEDevice& central) {
   Serial.println("[STREAM] streamDeviceInfo entered");
   
@@ -412,10 +446,11 @@ void streamDeviceInfo(BLEDevice& central) {
   doc["firmwareVersion"] = "1.2.0";
   doc["dataModelVersion"] = "1.9.0";
 
-  // Capabilities
+  // Capabilities (using type-safe enums)
   JsonArray capabilities = doc.createNestedArray("capabilities");
-  // Based on REQUIREMENTS.md, Nano offloads RANSAC
-  capabilities.add("ransac_remote");
+  // Based on REQUIREMENTS.md, Nano offloads RANSAC and has IMU
+  capabilities.add(capabilityToString(DeviceCapability::RANSAC_REMOTE));
+  capabilities.add(capabilityToString(DeviceCapability::IMU_STABILIZATION));
 
   // Pump Info
   JsonObject pump = doc.createNestedObject("pump");
@@ -434,7 +469,7 @@ void streamDeviceInfo(BLEDevice& central) {
   co2Sensor["make"] = "GSS";
   co2Sensor["model"] = "SprintIR-W";
   co2Sensor["serialNumber"] = "CO2-SIM-001";
-  co2Sensor["sensorType"] = "NDIR";
+  co2Sensor["sensorType"] = sensorTypeToString(SensorType::NDIR);
   JsonArray co2Channels = co2Sensor.createNestedArray("channels");
   JsonObject co2Channel = co2Channels.createNestedObject();
   co2Channel["id"] = "co2";
@@ -452,7 +487,7 @@ void streamDeviceInfo(BLEDevice& central) {
   envSensor["make"] = "Onboard";
   envSensor["model"] = "BMP390/HS3003"; // Correct for Nano BLE Sense Rev 2
   envSensor["serialNumber"] = "N/A";
-  envSensor["sensorType"] = "MEMS";
+  envSensor["sensorType"] = sensorTypeToString(SensorType::MEMS);
   JsonArray envChannels = envSensor.createNestedArray("channels");
   
   JsonObject tempChannel = envChannels.createNestedObject();
